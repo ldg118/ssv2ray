@@ -34,7 +34,7 @@ V2Ray 一键安装脚本 & 管理脚本是一个功能全面的工具，用于�
 2. 下载并执行安装脚本：
 
 ```bash
-wget -N --no-check-certificate https://raw.githubusercontent.com/user/v2ray_script/master/install.sh && chmod +x install.sh && bash install.sh
+wget -N --no-check-certificate https://raw.githubusercontent.com/ldg118/ssv2ray/refs/heads/main/install.sh && chmod +x install.sh && bash install.sh
 ```
 
 3. 安装完成后，可以通过以下命令进入管理菜单：
