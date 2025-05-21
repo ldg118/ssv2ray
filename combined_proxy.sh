@@ -1,21 +1,20 @@
 #!/bin/bash
-# Combined Proxy Script with Uninstall Mode
-# Based on scripts from https://github.com/ldg118/Proxy
-# Original Author: Slotheve<https://slotheve.com>
-# Combined and Enhanced by Manus
 # 多协议代理一键脚本（含卸载模式）
-# 基于 https://github.com/ldg118/Proxy 仓库脚本
-# 原作者: Slotheve<https://slotheve.com>
+# 基于 https://github.com/ldg118/Proxy 和 https://github.com/233boy/v2ray 仓库脚本
+# 原作者: Slotheve<https://slotheve.com> 和 233boy
 # 整合与增强: Manus
 
-# --- Color Codes ---
+# --- 颜色代码 ---
 RED="\033[31m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
 BLUE="\033[36m"
+CYAN="\033[36m"
+MAGENTA="\033[35m"
 PLAIN='\033[0m'
+BOLD="\033[1m"
 
-# --- Global Variables ---
+# --- 全局变量 ---
 IP4=$(curl -sL -4 ip.sb)
 IP6=$(curl -sL -6 ip.sb)
 CPU=$(uname -m)
@@ -25,28 +24,98 @@ CMD_INSTALL=""
 CMD_REMOVE=""
 CMD_UPGRADE=""
 OS_TYPE=""
-LANGUAGE="en" # Default language: en for English, zh for Chinese
+CURRENT_MENU="main" # 当前菜单：main, proxy, v2ray, service, logs
+VERSION="1.0.0"
+LAST_ACTION=""
 
-# --- Utility Functions ---
+# --- 工具函数 ---
 
-# Color Echo Function
+# 彩色输出函数
 colorEcho() {
     echo -e "${1}${@:2}${PLAIN}"
 }
 
-# Bilingual Message Function
-msg() {
-    local en_msg="$1"
-    local zh_msg="$2"
+# 显示标题
+showTitle() {
+    clear
+    echo
+    colorEcho $BLUE "╔════════════════════════════════════════════════════════════╗"
+    colorEcho $BLUE "║                                                            ║"
+    colorEcho $BLUE "║ ${BOLD}               多协议代理一键管理脚本 v${VERSION}                ${PLAIN}${BLUE} ║"
+    colorEcho $BLUE "║                                                            ║"
+    colorEcho $BLUE "╚════════════════════════════════════════════════════════════╝"
+    echo
+}
+
+# 显示底部
+showFooter() {
+    echo
+    colorEcho $BLUE "╔════════════════════════════════════════════════════════════╗"
+    colorEcho $BLUE "║                                                            ║"
+    colorEcho $BLUE "║  ${PLAIN}${YELLOW}提示: 选择数字执行相应操作，选择 0 退出，选择 88 返回上级菜单${PLAIN}${BLUE}  ║"
+    colorEcho $BLUE "║                                                            ║"
+    colorEcho $BLUE "╚════════════════════════════════════════════════════════════╝"
+    echo
+}
+
+# 显示分隔线
+showSeparator() {
+    colorEcho $BLUE "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄"
+    echo
+}
+
+# 显示操作结果
+showResult() {
+    local result=$1
+    local message=$2
     
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        echo -e "$zh_msg"
+    echo
+    if [[ "$result" == "success" ]]; then
+        colorEcho $GREEN " ✓ $message"
     else
-        echo -e "$en_msg"
+        colorEcho $RED " ✗ $message"
+    fi
+    echo
+    colorEcho $YELLOW " 按任意键继续..."
+    read -n 1 -s
+}
+
+# 显示确认对话框
+showConfirm() {
+    local message=$1
+    local default=${2:-"n"}
+    
+    if [[ "$default" == "y" ]]; then
+        read -p " $message [Y/n]: " confirm
+        [[ -z "$confirm" ]] && confirm="y"
+    else
+        read -p " $message [y/N]: " confirm
+        [[ -z "$confirm" ]] && confirm="n"
+    fi
+    
+    if [[ "${confirm,,}" == "y" ]]; then
+        return 0
+    else
+        return 1
     fi
 }
 
-# Architecture Check
+# 显示返回提示
+showBack() {
+    echo
+    colorEcho $YELLOW " 操作完成，按任意键返回..."
+    read -n 1 -s
+    
+    case "$CURRENT_MENU" in
+        "proxy") proxy_menu ;;
+        "v2ray") v2ray_menu ;;
+        "service") service_menu ;;
+        "logs") logs_menu ;;
+        *) main_menu ;;
+    esac
+}
+
+# 架构检测
 archAffix() {
     case "$CPU" in
         x86_64|amd64)
@@ -58,34 +127,26 @@ archAffix() {
             CPU="aarch64"
         ;;
         *)
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $RED " 错误: 不支持的CPU架构!"
-            else
-                colorEcho $RED " Error: Unsupported CPU architecture!"
-            fi
+            colorEcho $RED " 错误: 不支持的CPU架构!"
             exit 1
         ;;
     esac
     return 0
 }
 
-# System Check Function
+# 系统检测函数
 checkSystem() {
-    # Root check
+    # Root检测
     result=$(id | awk '{print $1}')
     if [[ $result != "uid=0(root)" ]]; then
         result=$(id | awk '{print $1}')
         if [[ $result != "用户id=0(root)" ]]; then
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $RED " 错误: 请以root身份运行此脚本。"
-            else
-                colorEcho $RED " Error: Please run this script as root."
-            fi
+            colorEcho $RED " 错误: 请以root身份运行此脚本。"
             exit 1
         fi
     fi
 
-    # OS check
+    # 系统检测
     if [[ -f /etc/redhat-release ]]; then
         OS_TYPE="centos"
         PMT="yum"
@@ -111,76 +172,48 @@ checkSystem() {
         CMD_REMOVE="apk del "
         CMD_UPGRADE="apk update; apk upgrade"
     else
-        if [[ "$LANGUAGE" == "zh" ]]; then
-            colorEcho $RED " 错误: 不支持的Linux发行版。"
-        else
-            colorEcho $RED " Error: Unsupported Linux distribution."
-        fi
+        colorEcho $RED " 错误: 不支持的Linux发行版。"
         exit 1
     fi
 
-    # Systemctl check (except Alpine)
+    # Systemctl检测 (除Alpine外)
     if [[ "$OS_TYPE" != "alpine" ]]; then
         res=$(which systemctl 2>/dev/null)
         if [[ "$?" != "0" ]]; then
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $RED " 错误: 需要systemd但未找到。请升级您的系统。"
-            else
-                colorEcho $RED " Error: Systemd is required, but not found. Please upgrade your system."
-            fi
+            colorEcho $RED " 错误: 需要systemd但未找到。请升级您的系统。"
             exit 1
         fi
     elif [[ "$OS_TYPE" == "alpine" ]]; then
         res=$(which rc-service 2>/dev/null)
         if [[ "$?" != "0" ]]; then
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $RED " 错误: Alpine需要OpenRC但未找到。"
-            else
-                colorEcho $RED " Error: OpenRC is required for Alpine, but not found."
-            fi
+            colorEcho $RED " 错误: Alpine需要OpenRC但未找到。"
             exit 1
         fi
-        # Ensure bash and curl are installed on Alpine
+        # 确保Alpine上安装了bash和curl
         if ! command -v bash &> /dev/null || ! command -v curl &> /dev/null; then
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $YELLOW " 正在为Alpine安装bash和curl..."
-            else
-                colorEcho $YELLOW " Installing bash and curl for Alpine..."
-            fi
+            colorEcho $YELLOW " 正在为Alpine安装bash和curl..."
             apk add --no-cache bash curl
             if [[ $? -ne 0 ]]; then
-                if [[ "$LANGUAGE" == "zh" ]]; then
-                    colorEcho $RED " 安装bash或curl失败。请手动安装并重新运行脚本。"
-                else
-                    colorEcho $RED " Failed to install bash or curl. Please install them manually and rerun the script."
-                fi
+                colorEcho $RED " 安装bash或curl失败。请手动安装并重新运行脚本。"
                 exit 1
             fi
         fi
     fi
 
-    # Set SELinux to permissive if enforcing
+    # 如果SELinux为enforcing，设置为permissive
     if [[ -s /etc/selinux/config ]] && grep -q 'SELINUX=enforcing' /etc/selinux/config; then
-        if [[ "$LANGUAGE" == "zh" ]]; then
-            colorEcho $YELLOW " 将SELinux设置为宽容模式。"
-        else
-            colorEcho $YELLOW " Setting SELinux to permissive."
-        fi
+        colorEcho $YELLOW " 将SELinux设置为宽容模式。"
         sed -i 's/SELINUX=enforcing/SELINUX=permissive/g' /etc/selinux/config
         setenforce 0
     fi
 
-    # Call archAffix
+    # 调用archAffix
     archAffix
 }
 
-# Install Basic Dependencies
+# 安装基本依赖
 installDependencies() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $YELLOW " 正在安装基本依赖（wget, curl, openssl, net-tools）..."
-    else
-        colorEcho $YELLOW " Installing basic dependencies (wget, curl, openssl, net-tools)..."
-    fi
+    colorEcho $YELLOW " 正在安装基本依赖（wget, curl, openssl, net-tools）..."
     
     if [[ "$PMT" = "yum" ]]; then
         $CMD_INSTALL wget curl openssl net-tools tar
@@ -189,494 +222,878 @@ installDependencies() {
     elif [[ "$PMT" = "apk" ]]; then
         $CMD_INSTALL wget curl openssl net-tools tar
     fi
-    # Check if installation was successful
+    # 检查安装是否成功
     if ! command -v wget &> /dev/null || ! command -v curl &> /dev/null || ! command -v openssl &> /dev/null; then
-        if [[ "$LANGUAGE" == "zh" ]]; then
-            colorEcho $RED " 错误: 安装基本依赖失败。"
-        else
-            colorEcho $RED " Error: Failed to install basic dependencies."
-        fi
+        colorEcho $RED " 错误: 安装基本依赖失败。"
         exit 1
     fi
 }
 
-# --- Language Selection ---
-select_language() {
-    clear
-    echo "############################################################"
-    echo "#                 语言选择 / Language Selection              #"
-    echo "############################################################"
-    echo ""
-    echo "  1. 中文"
-    echo "  2. English"
-    echo ""
-    read -p "请选择语言/Please select language [1-2]: " lang_choice
+# 显示系统信息
+showSystemInfo() {
+    showTitle
+    colorEcho $CYAN " 【系统信息】"
+    echo
+    colorEcho $YELLOW " 操作系统: $OS_TYPE"
+    colorEcho $YELLOW " 架构: $ARCH ($CPU)"
+    colorEcho $YELLOW " IPv4: $IP4"
+    [[ ! -z "$IP6" ]] && colorEcho $YELLOW " IPv6: $IP6"
+    echo
+    colorEcho $CYAN " 【已安装代理】"
+    echo
     
-    case $lang_choice in
-        1)
-            LANGUAGE="zh"
-            colorEcho $GREEN " 已选择中文作为显示语言"
-            ;;
-        2)
-            LANGUAGE="en"
-            colorEcho $GREEN " English has been selected as the display language"
-            ;;
-        *)
-            LANGUAGE="en"
-            colorEcho $YELLOW " 无效选择，使用默认语言(英文) / Invalid choice, using default language (English)"
-            ;;
-    esac
-    sleep 1
+    # 检查各代理是否安装
+    local installed=false
+    
+    # 检查Meta
+    if [[ -f /etc/mihomo/mihomo ]]; then
+        colorEcho $GREEN " ✓ Meta (mihomo) 已安装"
+        installed=true
+    fi
+    
+    # 检查Shadowsocks
+    if [[ -f /etc/ss/shadowsocks ]]; then
+        colorEcho $GREEN " ✓ Shadowsocks (ss-go) 已安装"
+        installed=true
+    fi
+    
+    # 检查Hysteria
+    if [[ -f /etc/hysteria/hysteria ]]; then
+        colorEcho $GREEN " ✓ Hysteria2 已安装"
+        installed=true
+    fi
+    
+    # 检查Tuic
+    if [[ -f /etc/tuic/tuic ]]; then
+        colorEcho $GREEN " ✓ Tuic 已安装"
+        installed=true
+    fi
+    
+    # 检查Sing-box
+    if [[ -f /usr/local/bin/sing-box ]]; then
+        colorEcho $GREEN " ✓ Sing-box 已安装"
+        installed=true
+    fi
+    
+    # 检查Xray
+    if [[ -f /usr/local/bin/xray ]]; then
+        colorEcho $GREEN " ✓ Xray 已安装"
+        installed=true
+    fi
+    
+    # 检查V2Ray
+    if [[ -f /usr/local/bin/v2ray ]]; then
+        colorEcho $GREEN " ✓ V2Ray 已安装"
+        installed=true
+    fi
+    
+    if [[ "$installed" == "false" ]]; then
+        colorEcho $YELLOW " 未检测到已安装的代理"
+    fi
+    
+    showSeparator
 }
 
-# --- Protocol Specific Functions (Placeholders) ---
+# --- 代理协议特定函数 (占位符) ---
 
 install_meta() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Meta (mihomo) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Meta (mihomo) installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Meta (mihomo)】"
+    echo
+    colorEcho $GREEN " Meta (mihomo) 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_meta"
+    showBack
 }
 
 uninstall_meta() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
+    showTitle
+    colorEcho $CYAN " 【卸载 Meta (mihomo)】"
+    echo
+    if showConfirm "确定要卸载 Meta (mihomo) 吗？"; then
         colorEcho $GREEN " Meta (mihomo) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Meta (mihomo) uninstallation."
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_meta"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_meta() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Meta (mihomo) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Meta (mihomo) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Meta (mihomo) 状态】"
+    echo
+    colorEcho $GREEN " Meta (mihomo) 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_meta"
+    showBack
 }
 
 showInfo_meta() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Meta (mihomo) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Meta (mihomo) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Meta (mihomo) 配置信息】"
+    echo
+    colorEcho $GREEN " Meta (mihomo) 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_meta"
+    showBack
 }
 
 install_ss() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Shadowsocks (ss-go) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Shadowsocks (ss-go) installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Shadowsocks (ss-go)】"
+    echo
+    colorEcho $GREEN " Shadowsocks (ss-go) 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_ss"
+    showBack
 }
 
 uninstall_ss() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
+    showTitle
+    colorEcho $CYAN " 【卸载 Shadowsocks (ss-go)】"
+    echo
+    if showConfirm "确定要卸载 Shadowsocks (ss-go) 吗？"; then
         colorEcho $GREEN " Shadowsocks (ss-go) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Shadowsocks (ss-go) uninstallation."
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_ss"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_ss() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Shadowsocks (ss-go) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Shadowsocks (ss-go) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Shadowsocks (ss-go) 状态】"
+    echo
+    colorEcho $GREEN " Shadowsocks (ss-go) 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_ss"
+    showBack
 }
 
 showInfo_ss() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Shadowsocks (ss-go) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Shadowsocks (ss-go) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Shadowsocks (ss-go) 配置信息】"
+    echo
+    colorEcho $GREEN " Shadowsocks (ss-go) 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_ss"
+    showBack
 }
 
 install_hysteria() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Hysteria2 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Hysteria2 installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Hysteria2】"
+    echo
+    colorEcho $GREEN " Hysteria2 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_hysteria"
+    showBack
 }
 
 uninstall_hysteria() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
+    showTitle
+    colorEcho $CYAN " 【卸载 Hysteria2】"
+    echo
+    if showConfirm "确定要卸载 Hysteria2 吗？"; then
         colorEcho $GREEN " Hysteria2 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Hysteria2 uninstallation."
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_hysteria"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_hysteria() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Hysteria2 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Hysteria2 status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Hysteria2 状态】"
+    echo
+    colorEcho $GREEN " Hysteria2 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_hysteria"
+    showBack
 }
 
 showInfo_hysteria() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Hysteria2 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Hysteria2 info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Hysteria2 配置信息】"
+    echo
+    colorEcho $GREEN " Hysteria2 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_hysteria"
+    showBack
 }
 
 install_tuic() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Tuic 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Tuic installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Tuic】"
+    echo
+    colorEcho $GREEN " Tuic 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_tuic"
+    showBack
 }
 
 uninstall_tuic() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
+    showTitle
+    colorEcho $CYAN " 【卸载 Tuic】"
+    echo
+    if showConfirm "确定要卸载 Tuic 吗？"; then
         colorEcho $GREEN " Tuic 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Tuic uninstallation."
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_tuic"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_tuic() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Tuic 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Tuic status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Tuic 状态】"
+    echo
+    colorEcho $GREEN " Tuic 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_tuic"
+    showBack
 }
 
 showInfo_tuic() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Tuic 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Tuic info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Tuic 配置信息】"
+    echo
+    colorEcho $GREEN " Tuic 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_tuic"
+    showBack
 }
 
 install_singbox_reality() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (Reality) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (Reality) installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Sing-box (Reality)】"
+    echo
+    colorEcho $GREEN " Sing-box (Reality) 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_singbox_reality"
+    showBack
 }
 
 uninstall_singbox_reality() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (Reality) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (Reality) uninstallation."
+    showTitle
+    colorEcho $CYAN " 【卸载 Sing-box】"
+    echo
+    if showConfirm "确定要卸载 Sing-box 吗？"; then
+        colorEcho $GREEN " Sing-box 卸载功能占位符。"
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_singbox_reality"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_singbox_reality() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (Reality) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (Reality) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (Reality) 状态】"
+    echo
+    colorEcho $GREEN " Sing-box (Reality) 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_singbox_reality"
+    showBack
 }
 
 showInfo_singbox_reality() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (Reality) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (Reality) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (Reality) 配置信息】"
+    echo
+    colorEcho $GREEN " Sing-box (Reality) 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_singbox_reality"
+    showBack
 }
 
 install_singbox_shadowtls() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (ShadowTLS) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (ShadowTLS) installation."
-    fi
-    # Add installation logic here
-}
-
-uninstall_singbox_shadowtls() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (ShadowTLS) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (ShadowTLS) uninstallation."
-    fi
-    # Add uninstallation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Sing-box (ShadowTLS)】"
+    echo
+    colorEcho $GREEN " Sing-box (ShadowTLS) 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_singbox_shadowtls"
+    showBack
 }
 
 status_singbox_shadowtls() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (ShadowTLS) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (ShadowTLS) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (ShadowTLS) 状态】"
+    echo
+    colorEcho $GREEN " Sing-box (ShadowTLS) 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_singbox_shadowtls"
+    showBack
 }
 
 showInfo_singbox_shadowtls() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (ShadowTLS) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (ShadowTLS) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (ShadowTLS) 配置信息】"
+    echo
+    colorEcho $GREEN " Sing-box (ShadowTLS) 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_singbox_shadowtls"
+    showBack
 }
 
 install_singbox_ws() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (WS) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (WS) installation."
-    fi
-    # Add installation logic here
-}
-
-uninstall_singbox_ws() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (WS) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (WS) uninstallation."
-    fi
-    # Add uninstallation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Sing-box (WS)】"
+    echo
+    colorEcho $GREEN " Sing-box (WS) 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_singbox_ws"
+    showBack
 }
 
 status_singbox_ws() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (WS) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (WS) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (WS) 状态】"
+    echo
+    colorEcho $GREEN " Sing-box (WS) 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_singbox_ws"
+    showBack
 }
 
 showInfo_singbox_ws() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Singbox (WS) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Singbox (WS) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Sing-box (WS) 配置信息】"
+    echo
+    colorEcho $GREEN " Sing-box (WS) 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_singbox_ws"
+    showBack
 }
 
 install_xray_none() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Xray (None) 安装功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Xray (None) installation."
-    fi
-    # Add installation logic here
+    showTitle
+    colorEcho $CYAN " 【安装 Xray】"
+    echo
+    colorEcho $GREEN " Xray 安装功能占位符。"
+    # 添加安装逻辑
+    LAST_ACTION="install_xray_none"
+    showBack
 }
 
 uninstall_xray_none() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Xray (None) 卸载功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Xray (None) uninstallation."
+    showTitle
+    colorEcho $CYAN " 【卸载 Xray】"
+    echo
+    if showConfirm "确定要卸载 Xray 吗？"; then
+        colorEcho $GREEN " Xray 卸载功能占位符。"
+        # 添加卸载逻辑
+        LAST_ACTION="uninstall_xray_none"
     fi
-    # Add uninstallation logic here
+    showBack
 }
 
 status_xray_none() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Xray (None) 状态检查功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Xray (None) status check."
-    fi
-    # Add status check logic here
+    showTitle
+    colorEcho $CYAN " 【Xray 状态】"
+    echo
+    colorEcho $GREEN " Xray 状态检查功能占位符。"
+    # 添加状态检查逻辑
+    LAST_ACTION="status_xray_none"
+    showBack
 }
 
 showInfo_xray_none() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $GREEN " Xray (None) 信息显示功能占位符。"
-    else
-        colorEcho $GREEN " Placeholder for Xray (None) info display."
-    fi
-    # Add info display logic here
+    showTitle
+    colorEcho $CYAN " 【Xray 配置信息】"
+    echo
+    colorEcho $GREEN " Xray 信息显示功能占位符。"
+    # 添加信息显示逻辑
+    LAST_ACTION="showInfo_xray_none"
+    showBack
 }
 
-# --- Uninstall All Function ---
+# --- V2Ray 特定函数 ---
+
+install_v2ray() {
+    showTitle
+    colorEcho $CYAN " 【安装 V2Ray】"
+    echo
+    colorEcho $GREEN " 正在安装 V2Ray..."
+    # 这里可以调用233boy的v2ray安装脚本
+    # 例如：bash <(curl -s -L https://raw.githubusercontent.com/233boy/v2ray/master/install.sh)
+    colorEcho $GREEN " V2Ray 安装完成"
+    LAST_ACTION="install_v2ray"
+    showBack
+}
+
+uninstall_v2ray() {
+    showTitle
+    colorEcho $CYAN " 【卸载 V2Ray】"
+    echo
+    if showConfirm "确定要卸载 V2Ray 吗？"; then
+        colorEcho $GREEN " 正在卸载 V2Ray..."
+        # 这里可以调用233boy的v2ray卸载命令
+        # 例如：v2ray uninstall
+        colorEcho $GREEN " V2Ray 卸载完成"
+        LAST_ACTION="uninstall_v2ray"
+    fi
+    showBack
+}
+
+status_v2ray() {
+    showTitle
+    colorEcho $CYAN " 【V2Ray 状态】"
+    echo
+    colorEcho $GREEN " 正在检查 V2Ray 状态..."
+    # 这里可以调用233boy的v2ray状态检查命令
+    # 例如：v2ray status
+    LAST_ACTION="status_v2ray"
+    showBack
+}
+
+showInfo_v2ray() {
+    showTitle
+    colorEcho $CYAN " 【V2Ray 配置信息】"
+    echo
+    colorEcho $GREEN " 正在显示 V2Ray 配置信息..."
+    # 这里可以调用233boy的v2ray信息显示命令
+    # 例如：v2ray info
+    LAST_ACTION="showInfo_v2ray"
+    showBack
+}
+
+# --- 卸载所有函数 ---
 uninstall_all() {
-    if [[ "$LANGUAGE" == "zh" ]]; then
+    showTitle
+    colorEcho $CYAN " 【卸载所有代理】"
+    echo
+    if showConfirm "确定要卸载所有代理吗？此操作不可逆！"; then
         colorEcho $YELLOW " 开始卸载所有管理的代理服务..."
-    else
-        colorEcho $YELLOW " Starting uninstallation of all managed proxy services..."
-    fi
-    
-    # Call individual uninstall functions
-    uninstall_meta
-    uninstall_ss
-    uninstall_hysteria
-    uninstall_tuic
-    uninstall_singbox_reality # Assuming reality, shadowtls, ws use the same core singbox binary/service
-    # uninstall_singbox_shadowtls # Likely redundant if reality uninstalls core singbox
-    # uninstall_singbox_ws # Likely redundant
-    uninstall_xray_none
-    
-    if [[ "$LANGUAGE" == "zh" ]]; then
+        
+        # 调用各个卸载函数
+        uninstall_meta
+        uninstall_ss
+        uninstall_hysteria
+        uninstall_tuic
+        uninstall_singbox_reality # 假设reality, shadowtls, ws使用相同的核心singbox二进制/服务
+        # uninstall_singbox_shadowtls # 如果reality卸载核心singbox，可能冗余
+        # uninstall_singbox_ws # 可能冗余
+        uninstall_xray_none
+        uninstall_v2ray
+        
         colorEcho $GREEN " 卸载过程已完成。"
-    else
-        colorEcho $GREEN " Uninstallation process completed."
+        LAST_ACTION="uninstall_all"
     fi
+    showBack
 }
 
-# --- Main Menu ---
+# --- 主菜单 ---
 main_menu() {
-    clear
-    if [[ "$LANGUAGE" == "zh" ]]; then
-        colorEcho $BLUE "############################################################"
-        colorEcho $BLUE "#                多协议代理一键安装脚本                    #"
-        colorEcho $BLUE "#----------------------------------------------------------#"
-        colorEcho $BLUE "#         基于 Slotheve (ldg118/Proxy) 的脚本              #"
-        colorEcho $BLUE "#         由 Manus 整合并增强，添加统一菜单和卸载功能     #"
-        colorEcho $BLUE "############################################################"
-        echo
-        colorEcho $GREEN " --- 安装选项 --- "
-        colorEcho $PLAIN "  1. 安装 Meta (mihomo - Vmess/SS)"
-        colorEcho $PLAIN "  2. 安装 Shadowsocks (ss-go)"
-        colorEcho $PLAIN "  3. 安装 Hysteria2"
-        colorEcho $PLAIN "  4. 安装 Tuic (v5)"
-        colorEcho $PLAIN "  5. 安装 Sing-box (VLESS + Reality + Vision)"
-        colorEcho $PLAIN "  6. 安装 Sing-box (VLESS + ShadowTLS + Vision)" # Placeholder
-        colorEcho $PLAIN "  7. 安装 Sing-box (VLESS + WebSocket + Vision)" # Placeholder
-        colorEcho $PLAIN "  8. 安装 Xray (VLESS + TCP + TLS/XTLS)" # Placeholder
-        echo
-        colorEcho $GREEN " --- 卸载选项 --- "
-        colorEcho $RED "  9. 卸载 Meta (mihomo)"
-        colorEcho $RED " 10. 卸载 Shadowsocks (ss-go)"
-        colorEcho $RED " 11. 卸载 Hysteria2"
-        colorEcho $RED " 12. 卸载 Tuic (v5)"
-        colorEcho $RED " 13. 卸载 Sing-box (任何变体)"
-        colorEcho $RED " 14. 卸载 Xray (任何变体)"
-        colorEcho $RED " 15. 卸载所有管理的代理"
-        echo
-        colorEcho $GREEN " --- 其他选项 --- "
-        colorEcho $YELLOW " 16. 查看状态/配置信息 (稍后选择协议)"
-        colorEcho $YELLOW " 17. 管理服务 (启动/停止/重启 - 稍后选择)"
-        colorEcho $YELLOW " 18. 查看日志 (稍后选择协议)"
-        colorEcho $YELLOW " 19. 切换语言"
-        echo
-        colorEcho $PLAIN "  0. 退出"
-        echo
-        
-        read -p " 请选择一个选项 [0-19]: " choice
-    else
-        colorEcho $BLUE "############################################################"
-        colorEcho $BLUE "#         Combined Proxy Installation Script             #"
-        colorEcho $BLUE "#----------------------------------------------------------#"
-        colorEcho $BLUE "#         Based on scripts by Slotheve (ldg118/Proxy)      #"
-        colorEcho $BLUE "#         Enhanced with unified menu & uninstall by Manus  #"
-        colorEcho $BLUE "############################################################"
-        echo
-        colorEcho $GREEN " --- Installation Options --- "
-        colorEcho $PLAIN "  1. Install Meta (mihomo - Vmess/SS)"
-        colorEcho $PLAIN "  2. Install Shadowsocks (ss-go)"
-        colorEcho $PLAIN "  3. Install Hysteria2"
-        colorEcho $PLAIN "  4. Install Tuic (v5)"
-        colorEcho $PLAIN "  5. Install Sing-box (VLESS + Reality + Vision)"
-        colorEcho $PLAIN "  6. Install Sing-box (VLESS + ShadowTLS + Vision)" # Placeholder
-        colorEcho $PLAIN "  7. Install Sing-box (VLESS + WebSocket + Vision)" # Placeholder
-        colorEcho $PLAIN "  8. Install Xray (VLESS + TCP + TLS/XTLS)" # Placeholder
-        echo
-        colorEcho $GREEN " --- Uninstallation Options --- "
-        colorEcho $RED "  9. Uninstall Meta (mihomo)"
-        colorEcho $RED " 10. Uninstall Shadowsocks (ss-go)"
-        colorEcho $RED " 11. Uninstall Hysteria2"
-        colorEcho $RED " 12. Uninstall Tuic (v5)"
-        colorEcho $RED " 13. Uninstall Sing-box (Any Variant)"
-        colorEcho $RED " 14. Uninstall Xray (Any Variant)"
-        colorEcho $RED " 15. Uninstall ALL Managed Proxies"
-        echo
-        colorEcho $GREEN " --- Other Options --- "
-        colorEcho $YELLOW " 16. View Status / Config Info (Choose Protocol Later)"
-        colorEcho $YELLOW " 17. Manage Services (Start/Stop/Restart - Choose Later)"
-        colorEcho $YELLOW " 18. View Logs (Choose Protocol Later)"
-        colorEcho $YELLOW " 19. Switch Language"
-        echo
-        colorEcho $PLAIN "  0. Exit"
-        echo
-        
-        read -p " Please select an option [0-19]: " choice
-    fi
-
+    showTitle
+    CURRENT_MENU="main"
+    
+    colorEcho $CYAN " 【系统信息】"
+    colorEcho $YELLOW " 系统: $OS_TYPE | 架构: $ARCH | IP: $IP4"
+    
+    showSeparator
+    
+    colorEcho $CYAN " 【主菜单】"
+    echo
+    colorEcho $GREEN " --- 代理协议选择 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} 常规代理协议 ${YELLOW}(Shadowsocks, Hysteria2, Tuic, Singbox等)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} V2Ray 管理 ${YELLOW}(233boy的V2Ray脚本)${PLAIN}"
+    echo
+    colorEcho $GREEN " --- 管理选项 --- "
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} 服务管理 ${YELLOW}(启动/停止/重启)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} 查看日志"
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} 系统信息"
+    colorEcho $RED " ${BOLD} 6.${PLAIN} 卸载所有代理"
+    echo
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个选项 [0-6]: " choice
+    
     case $choice in
-        1) install_meta ;; 
-        2) install_ss ;; 
-        3) install_hysteria ;; 
-        4) install_tuic ;; 
-        5) install_singbox_reality ;; 
-        6) install_singbox_shadowtls ;; # Placeholder call
-        7) install_singbox_ws ;; # Placeholder call
-        8) install_xray_none ;; # Placeholder call
-        9) uninstall_meta ;; 
-       10) uninstall_ss ;; 
-       11) uninstall_hysteria ;; 
-       12) uninstall_tuic ;; 
-       13) uninstall_singbox_reality ;; # Assuming one uninstall for all singbox
-       14) uninstall_xray_none ;; # Assuming one uninstall for all xray
-       15) uninstall_all ;; 
-       # 16, 17, 18 would need sub-menus
-       16) 
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $YELLOW " 状态/信息菜单尚未实现。"
-            else
-                colorEcho $YELLOW " Status/Info menu not yet implemented."
-            fi
-            ;; 
-       17) 
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $YELLOW " 服务管理菜单尚未实现。"
-            else
-                colorEcho $YELLOW " Service management menu not yet implemented."
-            fi
-            ;; 
-       18) 
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $YELLOW " 日志查看菜单尚未实现。"
-            else
-                colorEcho $YELLOW " Log viewing menu not yet implemented."
-            fi
-            ;; 
-       19) select_language; main_menu ;;
-        0) exit 0 ;; 
+        1) proxy_menu ;;
+        2) v2ray_menu ;;
+        3) service_menu ;;
+        4) logs_menu ;;
+        5) 
+            showSystemInfo
+            read -p " 按任意键返回主菜单..." -n 1 -s
+            main_menu
+            ;;
+        6) 
+            uninstall_all
+            ;;
+        0) 
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0 
+            ;;
         *)
-            if [[ "$LANGUAGE" == "zh" ]]; then
-                colorEcho $RED " 无效选择，请重试。"
-            else
-                colorEcho $RED " Invalid choice, please try again."
-            fi
+            colorEcho $RED " 无效选择，请重试。"
             sleep 1.5
             main_menu
             ;;
     esac
 }
 
-# --- Script Execution ---
-select_language
+# --- 代理协议子菜单 ---
+proxy_menu() {
+    showTitle
+    CURRENT_MENU="proxy"
+    
+    colorEcho $CYAN " 【常规代理协议管理】"
+    echo
+    colorEcho $GREEN " --- 安装选项 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} 安装 Meta ${YELLOW}(mihomo - Vmess/SS)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} 安装 Shadowsocks ${YELLOW}(ss-go)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} 安装 Hysteria2"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} 安装 Tuic ${YELLOW}(v5)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} 安装 Sing-box ${YELLOW}(VLESS + Reality + Vision)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 6.${PLAIN} 安装 Sing-box ${YELLOW}(VLESS + ShadowTLS + Vision)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 7.${PLAIN} 安装 Sing-box ${YELLOW}(VLESS + WebSocket + Vision)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 8.${PLAIN} 安装 Xray ${YELLOW}(VLESS + TCP + TLS/XTLS)${PLAIN}"
+    
+    showSeparator
+    
+    colorEcho $GREEN " --- 卸载选项 --- "
+    colorEcho $RED " ${BOLD} 9.${PLAIN} 卸载 Meta ${YELLOW}(mihomo)${PLAIN}"
+    colorEcho $RED " ${BOLD}10.${PLAIN} 卸载 Shadowsocks ${YELLOW}(ss-go)${PLAIN}"
+    colorEcho $RED " ${BOLD}11.${PLAIN} 卸载 Hysteria2"
+    colorEcho $RED " ${BOLD}12.${PLAIN} 卸载 Tuic ${YELLOW}(v5)${PLAIN}"
+    colorEcho $RED " ${BOLD}13.${PLAIN} 卸载 Sing-box ${YELLOW}(任何变体)${PLAIN}"
+    colorEcho $RED " ${BOLD}14.${PLAIN} 卸载 Xray ${YELLOW}(任何变体)${PLAIN}"
+    
+    showSeparator
+    
+    colorEcho $GREEN " --- 信息查看 --- "
+    colorEcho $YELLOW " ${BOLD}15.${PLAIN} 查看配置信息"
+    
+    showSeparator
+    
+    colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回主菜单"
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个选项 [0-15/88]: " choice
+    
+    case $choice in
+        1) install_meta ;;
+        2) install_ss ;;
+        3) install_hysteria ;;
+        4) install_tuic ;;
+        5) install_singbox_reality ;;
+        6) install_singbox_shadowtls ;;
+        7) install_singbox_ws ;;
+        8) install_xray_none ;;
+        9) uninstall_meta ;;
+        10) uninstall_ss ;;
+        11) uninstall_hysteria ;;
+        12) uninstall_tuic ;;
+        13) uninstall_singbox_reality ;;
+        14) uninstall_xray_none ;;
+        15) info_submenu "proxy" ;;
+        88) main_menu ;;
+        0) 
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0 
+            ;;
+        *)
+            colorEcho $RED " 无效选择，请重试。"
+            sleep 1.5
+            proxy_menu
+            ;;
+    esac
+}
+
+# --- V2Ray子菜单 ---
+v2ray_menu() {
+    showTitle
+    CURRENT_MENU="v2ray"
+    
+    colorEcho $CYAN " 【V2Ray 管理】"
+    echo
+    colorEcho $GREEN " --- 基本操作 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} 安装 V2Ray"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} 卸载 V2Ray"
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} 查看 V2Ray 状态"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} 查看 V2Ray 配置信息"
+    
+    showSeparator
+    
+    colorEcho $GREEN " --- 高级操作 --- "
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} 添加配置"
+    colorEcho $PLAIN " ${BOLD} 6.${PLAIN} 更改配置"
+    colorEcho $PLAIN " ${BOLD} 7.${PLAIN} 删除配置"
+    colorEcho $PLAIN " ${BOLD} 8.${PLAIN} 更新 V2Ray"
+    
+    showSeparator
+    
+    colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回主菜单"
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个选项 [0-8/88]: " choice
+    
+    case $choice in
+        1) install_v2ray ;;
+        2) uninstall_v2ray ;;
+        3) status_v2ray ;;
+        4) showInfo_v2ray ;;
+        5) 
+            showTitle
+            colorEcho $CYAN " 【V2Ray 添加配置】"
+            echo
+            colorEcho $YELLOW " 此功能需要调用v2ray脚本，暂未实现。"
+            showBack
+            ;;
+        6) 
+            showTitle
+            colorEcho $CYAN " 【V2Ray 更改配置】"
+            echo
+            colorEcho $YELLOW " 此功能需要调用v2ray脚本，暂未实现。"
+            showBack
+            ;;
+        7) 
+            showTitle
+            colorEcho $CYAN " 【V2Ray 删除配置】"
+            echo
+            colorEcho $YELLOW " 此功能需要调用v2ray脚本，暂未实现。"
+            showBack
+            ;;
+        8) 
+            showTitle
+            colorEcho $CYAN " 【V2Ray 更新】"
+            echo
+            colorEcho $YELLOW " 此功能需要调用v2ray脚本，暂未实现。"
+            showBack
+            ;;
+        88) main_menu ;;
+        0) 
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0 
+            ;;
+        *)
+            colorEcho $RED " 无效选择，请重试。"
+            sleep 1.5
+            v2ray_menu
+            ;;
+    esac
+}
+
+# --- 服务管理子菜单 ---
+service_menu() {
+    showTitle
+    CURRENT_MENU="service"
+    
+    colorEcho $CYAN " 【服务管理】"
+    echo
+    colorEcho $GREEN " --- 选择要管理的服务 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} Meta ${YELLOW}(mihomo)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} Shadowsocks ${YELLOW}(ss-go)${PLAIN}"
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} Hysteria2"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} Tuic"
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} Sing-box"
+    colorEcho $PLAIN " ${BOLD} 6.${PLAIN} Xray"
+    colorEcho $PLAIN " ${BOLD} 7.${PLAIN} V2Ray"
+    
+    showSeparator
+    
+    colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回主菜单"
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个服务 [0-7/88]: " service_choice
+    
+    if [[ "$service_choice" == "88" ]]; then
+        main_menu
+        return
+    elif [[ "$service_choice" == "0" ]]; then
+        showTitle
+        colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+        echo
+        exit 0
+    elif [[ "$service_choice" -ge 1 && "$service_choice" -le 7 ]]; then
+        showTitle
+        
+        # 根据选择确定服务名称
+        local service_name=""
+        case $service_choice in
+            1) service_name="Meta (mihomo)" ;;
+            2) service_name="Shadowsocks (ss-go)" ;;
+            3) service_name="Hysteria2" ;;
+            4) service_name="Tuic" ;;
+            5) service_name="Sing-box" ;;
+            6) service_name="Xray" ;;
+            7) service_name="V2Ray" ;;
+        esac
+        
+        colorEcho $CYAN " 【$service_name 服务操作】"
+        echo
+        colorEcho $GREEN " --- 选择操作 --- "
+        colorEcho $PLAIN " ${BOLD} 1.${PLAIN} 启动服务"
+        colorEcho $PLAIN " ${BOLD} 2.${PLAIN} 停止服务"
+        colorEcho $PLAIN " ${BOLD} 3.${PLAIN} 重启服务"
+        colorEcho $PLAIN " ${BOLD} 4.${PLAIN} 查看服务状态"
+        
+        showSeparator
+        
+        colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回上级菜单"
+        colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+        
+        showFooter
+        
+        read -p " 请选择一个操作 [0-4/88]: " operation_choice
+        
+        if [[ "$operation_choice" == "88" ]]; then
+            service_menu
+            return
+        elif [[ "$operation_choice" == "0" ]]; then
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0
+        elif [[ "$operation_choice" -ge 1 && "$operation_choice" -le 4 ]]; then
+            showTitle
+            colorEcho $CYAN " 【$service_name 服务操作】"
+            echo
+            
+            # 根据选择确定操作名称
+            local operation_name=""
+            case $operation_choice in
+                1) operation_name="启动" ;;
+                2) operation_name="停止" ;;
+                3) operation_name="重启" ;;
+                4) operation_name="状态" ;;
+            esac
+            
+            colorEcho $YELLOW " $operation_name $service_name 服务功能暂未实现。"
+            showBack
+        else
+            colorEcho $RED " 无效选择，请重试。"
+            sleep 1.5
+            service_menu
+        fi
+    else
+        colorEcho $RED " 无效选择，请重试。"
+        sleep 1.5
+        service_menu
+    fi
+}
+
+# --- 日志查看子菜单 ---
+logs_menu() {
+    showTitle
+    CURRENT_MENU="logs"
+    
+    colorEcho $CYAN " 【日志查看】"
+    echo
+    colorEcho $GREEN " --- 选择要查看的日志 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} Meta ${YELLOW}(mihomo)${PLAIN} 日志"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} Shadowsocks ${YELLOW}(ss-go)${PLAIN} 日志"
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} Hysteria2 日志"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} Tuic 日志"
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} Sing-box 日志"
+    colorEcho $PLAIN " ${BOLD} 6.${PLAIN} Xray 日志"
+    colorEcho $PLAIN " ${BOLD} 7.${PLAIN} V2Ray 日志"
+    
+    showSeparator
+    
+    colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回主菜单"
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个日志 [0-7/88]: " choice
+    
+    case $choice in
+        1|2|3|4|5|6|7) 
+            showTitle
+            colorEcho $CYAN " 【日志查看】"
+            echo
+            colorEcho $YELLOW " 日志查看功能暂未实现。"
+            showBack
+            ;;
+        88) main_menu ;;
+        0) 
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0 
+            ;;
+        *)
+            colorEcho $RED " 无效选择，请重试。"
+            sleep 1.5
+            logs_menu
+            ;;
+    esac
+}
+
+# --- 配置信息子菜单 ---
+info_submenu() {
+    local menu_type=$1
+    showTitle
+    
+    colorEcho $CYAN " 【配置信息查看】"
+    echo
+    colorEcho $GREEN " --- 选择要查看的配置 --- "
+    colorEcho $PLAIN " ${BOLD} 1.${PLAIN} Meta ${YELLOW}(mihomo)${PLAIN} 配置"
+    colorEcho $PLAIN " ${BOLD} 2.${PLAIN} Shadowsocks ${YELLOW}(ss-go)${PLAIN} 配置"
+    colorEcho $PLAIN " ${BOLD} 3.${PLAIN} Hysteria2 配置"
+    colorEcho $PLAIN " ${BOLD} 4.${PLAIN} Tuic 配置"
+    colorEcho $PLAIN " ${BOLD} 5.${PLAIN} Sing-box ${YELLOW}(Reality)${PLAIN} 配置"
+    colorEcho $PLAIN " ${BOLD} 6.${PLAIN} Sing-box ${YELLOW}(ShadowTLS)${PLAIN} 配置"
+    colorEcho $PLAIN " ${BOLD} 7.${PLAIN} Sing-box ${YELLOW}(WS)${PLAIN} 配置"
+    colorEcho $PLAIN " ${BOLD} 8.${PLAIN} Xray 配置"
+    
+    showSeparator
+    
+    colorEcho $PLAIN " ${BOLD}88.${PLAIN} 返回上级菜单"
+    colorEcho $PLAIN " ${BOLD} 0.${PLAIN} 退出"
+    
+    showFooter
+    
+    read -p " 请选择一个配置 [0-8/88]: " choice
+    
+    case $choice in
+        1) showInfo_meta ;;
+        2) showInfo_ss ;;
+        3) showInfo_hysteria ;;
+        4) showInfo_tuic ;;
+        5) showInfo_singbox_reality ;;
+        6) showInfo_singbox_shadowtls ;;
+        7) showInfo_singbox_ws ;;
+        8) showInfo_xray_none ;;
+        88) 
+            if [[ "$menu_type" == "proxy" ]]; then
+                proxy_menu
+            else
+                main_menu
+            fi
+            ;;
+        0) 
+            showTitle
+            colorEcho $GREEN " 感谢使用多协议代理一键管理脚本！"
+            echo
+            exit 0 
+            ;;
+        *)
+            colorEcho $RED " 无效选择，请重试。"
+            sleep 1.5
+            info_submenu "$menu_type"
+            ;;
+    esac
+}
+
+# --- 脚本执行 ---
 checkSystem
 installDependencies
 main_menu
