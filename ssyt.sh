@@ -2,7 +2,7 @@
 
 set -e
 
-# 协议列表（移除了WireGuard）
+# 协议列表
 PROTOCOLS="shadowsocks v2ray naiveproxy"
 
 # 配置目录
@@ -13,6 +13,7 @@ mkdir -p $CONFIG_DIR
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 # 检查Alpine系统
@@ -21,6 +22,175 @@ check_alpine() {
         echo -e "${RED}错误：此脚本仅适用于Alpine Linux系统${NC}"
         exit 1
     fi
+}
+
+# 显示主菜单
+show_menu() {
+    clear
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${BLUE}      Alpine Linux 轻量级代理管理脚本       ${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${GREEN}1. 安装代理协议${NC}"
+    echo -e "${GREEN}2. 卸载代理协议${NC}"
+    echo -e "${GREEN}3. 查看已安装协议${NC}"
+    echo -e "${GREEN}4. 查看配置信息${NC}"
+    echo -e "${RED}0. 退出脚本${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    read -p "请输入选项 [0-4]: " option
+    case $option in
+        1) install_menu ;;
+        2) uninstall_menu ;;
+        3) show_installed ;;
+        4) show_configs ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}无效选项，请重新输入${NC}"; sleep 1; show_menu ;;
+    esac
+}
+
+# 安装子菜单
+install_menu() {
+    clear
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${BLUE}           安装代理协议            ${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${GREEN}1. 安装Shadowsocks${NC}"
+    echo -e "${GREEN}2. 安装V2Ray${NC}"
+    echo -e "${GREEN}3. 安装NaiveProxy${NC}"
+    echo -e "${GREEN}4. 一键安装所有协议${NC}"
+    echo -e "${YELLOW}0. 返回主菜单${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    read -p "请输入选项 [0-4]: " option
+    
+    case $option in
+        1) install_protocol "shadowsocks" $(get_port "Shadowsocks");;
+        2) install_protocol "v2ray" $(get_port "V2Ray");;
+        3) install_protocol "naiveproxy" $(get_port "NaiveProxy");;
+        4) install_all_protocols ;;
+        0) show_menu ;;
+        *) echo -e "${RED}无效选项，请重新输入${NC}"; sleep 1; install_menu ;;
+    esac
+}
+
+# 卸载子菜单
+uninstall_menu() {
+    clear
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${BLUE}           卸载代理协议            ${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${GREEN}1. 卸载Shadowsocks${NC}"
+    echo -e "${GREEN}2. 卸载V2Ray${NC}"
+    echo -e "${GREEN}3. 卸载NaiveProxy${NC}"
+    echo -e "${GREEN}4. 一键卸载所有协议${NC}"
+    echo -e "${YELLOW}0. 返回主菜单${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    read -p "请输入选项 [0-4]: " option
+    
+    case $option in
+        1) uninstall_protocol "shadowsocks";;
+        2) uninstall_protocol "v2ray";;
+        3) uninstall_protocol "naiveproxy";;
+        4) uninstall_all_protocols ;;
+        0) show_menu ;;
+        *) echo -e "${RED}无效选项，请重新输入${NC}"; sleep 1; uninstall_menu ;;
+    esac
+}
+
+# 获取端口号
+get_port() {
+    local protocol=$1
+    read -p "请输入${protocol}端口号(留空使用随机端口): " port
+    if [ -z "$port" ]; then
+        port=$(generate_random_port)
+    fi
+    echo $port
+}
+
+# 显示已安装协议
+show_installed() {
+    clear
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${BLUE}           已安装的代理协议          ${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    
+    if [ ! -f "$CONFIG_DIR/installed_protocols" ] || [ ! -s "$CONFIG_DIR/installed_protocols" ]; then
+        echo -e "${YELLOW}当前没有安装任何代理协议${NC}"
+    else
+        echo -e "${GREEN}$(cat $CONFIG_DIR/installed_protocols)${NC}"
+    fi
+    
+    echo -e "${BLUE}==============================================${NC}"
+    read -n 1 -s -r -p "按任意键返回主菜单..."
+    show_menu
+}
+
+# 显示配置信息
+show_configs() {
+    clear
+    echo -e "${BLUE}==============================================${NC}"
+    echo -e "${BLUE}           代理配置信息            ${NC}"
+    echo -e "${BLUE}==============================================${NC}"
+    
+    for proto in $PROTOCOLS; do
+        if grep -q "^$proto$" "$CONFIG_DIR/installed_protocols" 2>/dev/null; then
+            echo -e "${YELLOW}${proto}配置:${NC}"
+            case $proto in
+                "shadowsocks")
+                    if [ -f "$CONFIG_DIR/shadowsocks_url.txt" ]; then
+                        echo -e "链接: ${GREEN}$(cat $CONFIG_DIR/shadowsocks_url.txt)${NC}"
+                    fi
+                    ;;
+                "v2ray")
+                    if [ -f "$CONFIG_DIR/v2ray_url.txt" ]; then
+                        echo -e "VMESS链接: ${GREEN}$(cat $CONFIG_DIR/v2ray_url.txt)${NC}"
+                    fi
+                    ;;
+                "naiveproxy")
+                    if [ -f "$CONFIG_DIR/naiveproxy.json" ]; then
+                        echo -e "用户名: ${GREEN}$(jq -r '.users | keys[0]' $CONFIG_DIR/naiveproxy.json 2>/dev/null)${NC}"
+                        echo -e "密码: ${GREEN}$(jq -r '.users[]' $CONFIG_DIR/naiveproxy.json 2>/dev/null)${NC}"
+                    fi
+                    ;;
+            esac
+            echo ""
+        fi
+    done
+    
+    echo -e "${BLUE}==============================================${NC}"
+    read -n 1 -s -r -p "按任意键返回主菜单..."
+    show_menu
+}
+
+# 安装所有协议
+install_all_protocols() {
+    echo -e "${YELLOW}开始一键安装所有代理协议...${NC}"
+    for proto in $PROTOCOLS; do
+        install_protocol "$proto" $(generate_random_port)
+    done
+    echo -e "${GREEN}所有协议安装完成！${NC}"
+    sleep 2
+    show_menu
+}
+
+# 卸载所有协议
+uninstall_all_protocols() {
+    echo -e "${YELLOW}开始一键卸载所有代理协议...${NC}"
+    for proto in $PROTOCOLS; do
+        uninstall_protocol "$proto"
+    done
+    echo -e "${GREEN}所有协议卸载完成！${NC}"
+    sleep 2
+    show_menu
+}
+
+# 生成随机端口
+generate_random_port() {
+    echo $(( $(od -An -N2 -i /dev/urandom) % 50000 + 10000 ))
+}
+
+# 生成随机字符串
+generate_random_string() {
+    local length=$1
+    tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c $length
 }
 
 # 安装依赖
@@ -37,21 +207,10 @@ optimize_memory() {
     rc-update del local default 2>/dev/null || true
 }
 
-# 生成随机端口
-generate_random_port() {
-    echo $(( $(od -An -N2 -i /dev/urandom) % 50000 + 10000 ))
-}
-
-# 生成随机字符串
-generate_random_string() {
-    local length=$1
-    tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c $length
-}
-
 # Shadowsocks配置
 configure_shadowsocks() {
-    local port=${1:-$(generate_random_port)}
-    local password=${2:-$(generate_random_string 16)}
+    local port=$1
+    local password=$(generate_random_string 16)
     local method="chacha20-ietf-poly1305"
     local config_file="$CONFIG_DIR/shadowsocks.json"
     
@@ -87,7 +246,7 @@ EOF
 
 # V2Ray配置
 configure_v2ray() {
-    local port=${1:-$(generate_random_port)}
+    local port=$1
     local uuid=$(cat /proc/sys/kernel/random/uuid)
     local config_file="/etc/v2ray/config.json"
     
@@ -155,9 +314,9 @@ EOF
 
 # NaiveProxy配置
 configure_naiveproxy() {
-    local port=${1:-$(generate_random_port)}
-    local username=${2:-user$(generate_random_string 4)}
-    local password=${3:-$(generate_random_string 16)}
+    local port=$1
+    local username="user$(generate_random_string 4)"
+    local password=$(generate_random_string 16)
     local config_file="$CONFIG_DIR/naiveproxy.json"
     
     echo -e "${YELLOW}正在配置NaiveProxy (端口: $port)...${NC}"
@@ -205,6 +364,13 @@ install_protocol() {
     local protocol=$1
     local port=$2
     
+    # 检查是否已安装
+    if grep -q "^$protocol$" "$CONFIG_DIR/installed_protocols" 2>/dev/null; then
+        echo -e "${YELLOW}${protocol}已经安装，跳过安装...${NC}"
+        sleep 2
+        return
+    fi
+    
     case $protocol in
         "shadowsocks")
             echo -e "${YELLOW}正在安装Shadowsocks-libev...${NC}"
@@ -231,11 +397,21 @@ install_protocol() {
     
     # 保存安装记录
     echo "$protocol" >> $CONFIG_DIR/installed_protocols
+    
+    read -n 1 -s -r -p "安装完成，按任意键继续..."
+    install_menu
 }
 
 # 卸载协议
 uninstall_protocol() {
     local protocol=$1
+    
+    # 检查是否已安装
+    if ! grep -q "^$protocol$" "$CONFIG_DIR/installed_protocols" 2>/dev/null; then
+        echo -e "${YELLOW}${protocol}未安装，无需卸载...${NC}"
+        sleep 2
+        return
+    fi
     
     case $protocol in
         "shadowsocks")
@@ -260,80 +436,24 @@ uninstall_protocol() {
     
     # 从安装记录中移除
     sed -i "/^$protocol$/d" $CONFIG_DIR/installed_protocols 2>/dev/null
-}
-
-# 显示帮助信息
-show_help() {
-    echo -e "${GREEN}使用方法: $0 [命令] [协议] [端口]${NC}"
-    echo ""
-    echo "命令列表:"
-    echo "  install [协议] [端口]    安装并配置指定协议"
-    echo "  uninstall [协议]        卸载指定协议"
-    echo "  list                    查看可用协议"
-    echo "  installed               查看已安装协议"
-    echo ""
-    echo "可用协议: $PROTOCOLS"
-    echo "使用 'all' 可以安装/卸载所有协议"
-    echo ""
-    echo "示例:"
-    echo "  $0 install shadowsocks 8388"
-    echo "  $0 install v2ray"
-    echo "  $0 uninstall naiveproxy"
-}
-
-# 主函数
-main() {
-    check_alpine
     
+    read -n 1 -s -r -p "卸载完成，按任意键继续..."
+    uninstall_menu
+}
+
+# 初始化检查
+init_check() {
+    check_alpine
     if [ "$(id -u)" -ne 0 ]; then
         echo -e "${RED}错误：请使用root用户运行此脚本${NC}"
         exit 1
     fi
-
-    case $1 in
-        "install")
-            install_dependencies
-            optimize_memory
-            
-            if [ -z "$2" ]; then
-                show_help
-                exit 1
-            fi
-            
-            if [ "$2" = "all" ]; then
-                for proto in $PROTOCOLS; do
-                    install_protocol $proto $3
-                done
-            else
-                install_protocol "$2" "$3"
-            fi
-            ;;
-        "uninstall")
-            if [ -z "$2" ]; then
-                show_help
-                exit 1
-            fi
-            
-            if [ "$2" = "all" ]; then
-                for proto in $PROTOCOLS; do
-                    uninstall_protocol $proto
-                done
-            else
-                uninstall_protocol "$2"
-            fi
-            ;;
-        "list")
-            echo -e "${GREEN}可用协议: $PROTOCOLS${NC}"
-            ;;
-        "installed")
-            echo -e "${GREEN}已安装协议:${NC}"
-            cat $CONFIG_DIR/installed_protocols 2>/dev/null || echo "无"
-            ;;
-        *)
-            show_help
-            exit 1
-            ;;
-    esac
+    
+    # 安装必要依赖
+    install_dependencies
+    optimize_memory
 }
 
-main "$@"
+# 主程序
+init_check
+show_menu
