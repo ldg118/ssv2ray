@@ -196,7 +196,15 @@ generate_random_string() {
 # 安装依赖
 install_dependencies() {
     echo -e "${YELLOW}正在安装依赖包...${NC}"
-    apk add --no-cache curl jq openssl bash qrencode
+    apk add --no-cache curl jq openssl bash
+    
+    # 特殊处理qrencode依赖
+    if ! apk add --no-cache qrencode 2>/dev/null; then
+        echo -e "${YELLOW}警告：无法安装qrencode包，二维码生成功能将不可用${NC}"
+        echo -e "${YELLOW}如果需要二维码功能，请手动安装qrencode:${NC}"
+        echo -e "${YELLOW}1. 编辑/etc/apk/repositories 取消community仓库的注释${NC}"
+        echo -e "${YELLOW}2. 运行: apk update && apk add qrencode${NC}"
+    fi
 }
 
 # 内存优化
@@ -239,9 +247,13 @@ EOF
     echo -e "\nShadowsocks链接: ${GREEN}$ss_url${NC}"
     echo "$ss_url" > $CONFIG_DIR/shadowsocks_url.txt
     
-    # 生成二维码
-    echo -e "\n二维码:"
-    qrencode -t ANSIUTF8 "$ss_url"
+    # 尝试生成二维码
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "\n二维码:"
+        qrencode -t ANSIUTF8 "$ss_url"
+    else
+        echo -e "\n${YELLOW}提示：未安装qrencode，无法生成二维码${NC}"
+    fi
 }
 
 # V2Ray配置
@@ -307,9 +319,13 @@ EOF
     echo -e "\nV2Ray VMESS链接: ${GREEN}$vmess_url${NC}"
     echo "$vmess_url" > $CONFIG_DIR/v2ray_url.txt
     
-    # 生成二维码
-    echo -e "\n二维码:"
-    qrencode -t ANSIUTF8 "$vmess_url"
+    # 尝试生成二维码
+    if command -v qrencode >/dev/null 2>&1; then
+        echo -e "\n二维码:"
+        qrencode -t ANSIUTF8 "$vmess_url"
+    else
+        echo -e "\n${YELLOW}提示：未安装qrencode，无法生成二维码${NC}"
+    fi
 }
 
 # NaiveProxy配置
