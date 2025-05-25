@@ -2,12 +2,110 @@
 
 set -e
 
+# -------- 基础检测和环境准备 --------
+os_detect() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID=$ID
+    else
+        echo "不支持当前操作系统"
+        exit 1
+    fi
+}
+
+inst_pkg() {
+    case "$OS_ID" in
+        ubuntu|debian)
+            apt-get update -y
+            DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+            ;;
+        alpine)
+            apk update
+            apk add --no-cache "$@"
+            ;;
+        *)
+            echo "不支持当前系统"
+            exit 1
+            ;;
+    esac
+}
+
+install_base_tools() {
+    BINS="curl wget unzip coreutils ca-certificates"
+    inst_pkg $BINS
+}
+
+# -------- 服务名自动检测 --------
+get_service_name() {
+    local app="$1"
+    local service=""
+    case "$app" in
+        dante-server|danted) service="danted" ;;
+        shadowsocks-libev)
+            if [ "$OS_ID" = "alpine" ]; then
+                for s in ss-server shadowsocks-libev shadowsocks; do
+                    [ -f "/etc/init.d/$s" ] && service="$s" && break
+                done
+                [ -z "$service" ] && service="ss-server"
+            else
+                service="shadowsocks-libev"
+            fi
+            ;;
+        v2ray) service="v2ray" ;;
+        hysteria2) service="hysteria2" ;;
+        *) service="$app" ;;
+    esac
+    echo "$service"
+}
+
+start_and_enable_service() {
+    local app="$1"
+    local service
+    service=$(get_service_name "$app")
+    if [ -z "$service" ]; then
+        echo "未找到 $app 的服务名，跳过服务启动。"
+        return 1
+    fi
+    case "$OS_ID" in
+        ubuntu|debian)
+            systemctl enable "$service"
+            systemctl restart "$service"
+            ;;
+        alpine)
+            rc-update add "$service" default 2>/dev/null || true
+            rc-service "$service" restart
+            ;;
+        *)
+            echo "未知系统，无法管理服务 $service"
+            return 1
+            ;;
+    esac
+}
+
+stop_and_remove_service() {
+    local app="$1"
+    local service
+    service=$(get_service_name "$app")
+    if [ -z "$service" ]; then return 0; fi
+    case "$OS_ID" in
+        ubuntu|debian)
+            systemctl stop "$service" 2>/dev/null || true
+            systemctl disable "$service" 2>/dev/null || true
+            ;;
+        alpine)
+            rc-service "$service" stop 2>/dev/null || true
+            rc-update del "$service" default 2>/dev/null || true
+            ;;
+    esac
+}
+
+# -------- 交互UI --------
 title_banner() {
     clear
     echo "##########################################"
-    echo "   高级多协议代理一键安装与配置工具"
+    echo "   多协议代理服务一键安装配置工具"
     echo "   支持 Ubuntu / Debian / Alpine"
-    echo "   支持 Socks5 / Shadowsocks / VMess / VLESS / Hysteria2"
+    echo "   包含 Socks5 / Shadowsocks / VMess / VLESS / Hysteria2"
     echo "##########################################"
     echo
 }
@@ -29,28 +127,6 @@ protocol_list() {
     read -p "请选择协议 [1-6/0]: " proto
 }
 
-os_detect() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS_ID=$ID
-    else
-        echo "不支持当前操作系统" ; exit 1
-    fi
-}
-
-inst_pkg() {
-    case "$OS_ID" in
-        ubuntu|debian)
-            apt-get update && apt-get install -y "$@"
-            ;;
-        alpine)
-            apk update && apk add "$@"
-            ;;
-        *)
-            echo "不支持当前系统" ; exit 1
-    esac
-}
-
 input_with_default() { # $1: 问题  $2: 默认值  $3: 变量名
     read -p "$1 [$2]: " var
     eval $3="${var:-$2}"
@@ -68,41 +144,40 @@ confirm_info() { # $1 总览内容
     return 0
 }
 
+get_public_ip() {
+    (curl -s https://api.ipify.org || wget -qO- https://api.ipify.org) 2>/dev/null
+}
+
+# -------- 客户端信息输出 --------
 show_client_ss() {
-    IP=$(curl -s https://api.ipify.org)
+    IP=$(get_public_ip)
     echo
     echo "------ Shadowsocks 客户端配置信息 ------"
     echo "服务器地址: $IP"
     echo "服务器端口: $ss_port"
     echo "密码:       $ss_passwd"
     echo "加密方式:   $ss_method"
-    echo "链接：ss://$(echo -n "aes-256-gcm:$ss_passwd@$IP:$ss_port" | base64 -w 0)"
+    URL="ss://$(echo -n "$ss_method:$ss_passwd@$IP:$ss_port" | base64 -w 0)"
+    echo "分享链接:   $URL"
     echo "----------------------------------------"
 }
-
 show_client_v2ray() {
-    IP=$(curl -s https://api.ipify.org)
+    IP=$(get_public_ip)
     echo
     echo "------ $1 客户端配置信息 ------"
     echo "服务器地址: $IP"
     echo "端口:       $v2ray_port"
     echo "UUID:       $v2ray_uuid"
-    if [[ "$1" == "VMess" ]]; then
-        alterId=0
-        proto=vmess
-    else
-        alterId=""
-        proto=vless
-    fi
+    proto="vmess"
+    [ "$1" == "VLESS" ] && proto="vless"
     cat <<EOF
-配置二维码/链接（可导入v2rayN/v2fly/UQR等）：
 {
   "v": "2",
-  "ps": "${IP}-${proto}",
+  "ps": "${IP}-$proto",
   "add": "$IP",
   "port": "$v2ray_port",
   "id": "$v2ray_uuid",
-  "aid": "$alterId",
+  "aid": "0",
   "net": "tcp",
   "type": "none",
   "host": "",
@@ -112,21 +187,19 @@ show_client_v2ray() {
 EOF
     echo "----------------------------------------"
 }
-
 show_client_hysteria2() {
-    IP=$(curl -s https://api.ipify.org)
+    IP=$(get_public_ip)
     echo
     echo "------ Hysteria2 客户端配置信息 ------"
     echo "服务器地址: $IP"
     echo "端口:       $hy_port"
     echo "密钥:       $hy_key"
     echo "obfs方式:   salamander"
-    echo "url: hysteria2://$hy_key@$IP:$hy_port?obfs=salamander"
+    echo "推荐链接:   hysteria2://$hy_key@$IP:$hy_port?obfs=salamander"
     echo "----------------------------------------"
 }
-
 show_client_socks5() {
-    IP=$(curl -s https://api.ipify.org)
+    IP=$(get_public_ip)
     echo
     echo "------ Socks5 客户端配置信息 ------"
     echo "服务器地址: $IP"
@@ -136,8 +209,7 @@ show_client_socks5() {
     echo "----------------------------------------"
 }
 
-# 安装配置部分
-
+# -------- 安装/配置各协议 --------
 config_socks5() {
     title_banner
     echo "Socks5 (Dante) 代理协议设置"
@@ -172,8 +244,7 @@ pass {
     protocol: tcp udp
 }
 EOF
-    systemctl enable danted
-    systemctl restart danted
+    start_and_enable_service dante-server
     echo "Socks5服务已部署！"
     show_client_socks5
     pause_enter
@@ -194,6 +265,7 @@ INF
     confirm_info "" || return
 
     inst_pkg shadowsocks-libev
+    mkdir -p /etc/shadowsocks-libev
     cat > /etc/shadowsocks-libev/config.json <<EOF
 {
     "server":"0.0.0.0",
@@ -203,8 +275,7 @@ INF
     "method":"$ss_method"
 }
 EOF
-    systemctl enable shadowsocks-libev
-    systemctl restart shadowsocks-libev
+    start_and_enable_service shadowsocks-libev
     echo "Shadowsocks服务已部署！"
     show_client_ss
     pause_enter
@@ -240,8 +311,7 @@ INF
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
-    systemctl enable v2ray
-    systemctl restart v2ray
+    start_and_enable_service v2ray
     echo "V2Ray - VMess服务已部署！"
     show_client_v2ray "VMess"
     pause_enter
@@ -281,8 +351,7 @@ INF
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
-    systemctl enable v2ray
-    systemctl restart v2ray
+    start_and_enable_service v2ray
     echo "V2Ray - VLESS服务已部署！"
     show_client_v2ray "VLESS"
     pause_enter
@@ -296,7 +365,6 @@ config_hysteria2() {
     if [ -z "$hy_key" ]; then
         hy_key=$(head -c 12 /dev/urandom | base64)
     fi
-
     cat <<INF
 Hysteria2 代理参数总览：
 端口: $hy_port
@@ -305,7 +373,8 @@ obfs: salamander
 INF
     confirm_info "" || return
 
-    URL=$(wget -qO- https://api.github.com/repos/apernet/hysteria/releases/latest | grep browser_download_url | grep linux-amd64 | head -1 | cut -d '"' -f 4)
+    # 下载最新二进制
+    URL=$(wget -qO- https://api.github.com/repos/apernet/hysteria/releases/latest | grep browser_download_url | grep linux-amd64 | grep -v client | head -1 | cut -d '"' -f 4)
     wget -O /usr/local/bin/hysteria2 "$URL"
     chmod +x /usr/local/bin/hysteria2
 
@@ -324,7 +393,8 @@ transport:
     up_mbps: 100
     down_mbps: 100
 EOF
-    # 创建 systemd 服务
+
+    # systemd 或 openrc 部署服务
     cat > /etc/systemd/system/hysteria2.service <<EOF
 [Unit]
 Description=Hysteria2 Server
@@ -337,14 +407,29 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl enable hysteria2
-    systemctl restart hysteria2
+
+    if [ "$OS_ID" = "alpine" ]; then
+        # 为 Alpine 创建 openrc 脚本
+        cat > /etc/init.d/hysteria2 <<'EOP'
+#!/sbin/openrc-run
+command="/usr/local/bin/hysteria2"
+command_args="server -c /etc/hysteria/config.yaml"
+pidfile="/run/hysteria2.pid"
+name="hysteria2"
+description="hysteria2 proxy server"
+EOP
+        chmod +x /etc/init.d/hysteria2
+    fi
+
+    systemctl daemon-reload 2>/dev/null || true
+    start_and_enable_service hysteria2
+
     echo "Hysteria2服务已部署！"
     show_client_hysteria2
     pause_enter
 }
 
+# -------- 卸载全部代理 --------
 uninstall_agents() {
     title_banner
     echo "！！！ 卸载警告 ！！！"
@@ -356,28 +441,33 @@ uninstall_agents() {
         pause_enter
         return
     fi
+
+    stop_and_remove_service dante-server
+    stop_and_remove_service shadowsocks-libev
+    stop_and_remove_service v2ray
+    stop_and_remove_service hysteria2
+
     case "$OS_ID" in
         ubuntu|debian)
-            systemctl stop danted ss-server v2ray hysteria2 2>/dev/null
-            apt-get remove --purge -y dante-server shadowsocks-libev v2ray hysteria
+            apt-get remove --purge -y dante-server shadowsocks-libev v2ray
             ;;
         alpine)
-            rc-service danted stop 2>/dev/null
-            rc-service ss-server stop 2>/dev/null
-            rc-service v2ray stop 2>/dev/null
-            rc-service hysteria2 stop 2>/dev/null
-            apk del dante-server shadowsocks-libev v2ray hysteria2
+            apk del dante-server shadowsocks-libev v2ray
             ;;
     esac
+
     rm -rf /etc/danted.conf /etc/shadowsocks-libev/config.json /etc/v2ray /etc/hysteria
-    rm -f /etc/systemd/system/hysteria2.service
-    systemctl daemon-reload
+    rm -f /etc/systemd/system/hysteria2.service /etc/init.d/hysteria2
+    systemctl daemon-reload 2>/dev/null || true
+
     echo "已全部卸载"
     pause_enter
 }
 
+# -------- 主入口 --------
 main_menu() {
     os_detect
+    install_base_tools
     while true; do
         title_banner
         protocol_list
@@ -393,5 +483,12 @@ main_menu() {
         esac
     done
 }
+
+# -------- 命令行卸载支持 --------
+if [ "$1" = "uninstall" ]; then
+    os_detect
+    uninstall_agents
+    exit 0
+fi
 
 main_menu
